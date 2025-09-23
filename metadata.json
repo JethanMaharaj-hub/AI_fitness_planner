@@ -1,0 +1,5 @@
+{
+  "name": "AI Fitness Planner",
+  "description": "An intelligent fitness platform that analyzes workout content from images or YouTube links to generate personalized, multi-disciplinary training programs. It features specialized timers for AMRAP and EMOM workouts, catering to advanced athletes.",
+  "requestFramePermissions": []
+}
