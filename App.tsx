@@ -56,7 +56,8 @@ const App: React.FC = () => {
           }
         } catch (e: any) {
           console.error(e);
-          setError("Could not connect to the database. Please check your internet connection and ensure your network allows access to Google Firebase services.");
+          // Provide a more specific, actionable error message for the common Firestore setup issue.
+          setError("Could not connect to the Firestore database. This usually means the database hasn't been created yet in your Firebase project. Please go to the Firebase Console, select 'Firestore Database', and click 'Create database'. Also, check that your Security Rules allow access.");
         }
       } else {
         setUser(null);
@@ -227,7 +228,7 @@ const App: React.FC = () => {
             </div>
         )}
         
-        {!user && isFirebaseConfigured ? <AuthScreen setError={setError} /> : (
+        {!user && isFirebaseConfigured ? <AuthScreen error={error} setError={setError} /> : (
             <>
                 <header className="bg-gray-800/50 backdrop-blur-sm p-4 text-center sticky top-0 z-10">
                     <h1 className="text-2xl font-bold tracking-wider text-blue-400">AI Fitness Planner</h1>
@@ -266,11 +267,19 @@ const App: React.FC = () => {
 // For brevity, placing them here.
 
 // --- AUTH SCREEN ---
-const AuthScreen: React.FC<{setError: (e: string | null) => void}> = ({setError}) => {
+const AuthScreen: React.FC<{error: string | null; setError: (e: string | null) => void}> = ({error, setError}) => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [isLogin, setIsLogin] = useState(true);
     const [loading, setLoading] = useState(false);
+    const mounted = useRef(true);
+
+    useEffect(() => {
+        // When the component unmounts, update the ref.
+        return () => {
+            mounted.current = false;
+        };
+    }, []);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -282,10 +291,26 @@ const AuthScreen: React.FC<{setError: (e: string | null) => void}> = ({setError}
             } else {
                 await signUp(email, password);
             }
+            // On success, onAuthStateChanged will trigger a re-render of the parent,
+            // unmounting this component. We don't set loading to false here to avoid
+            // a state update on an unmounted component.
         } catch (error: any) {
-            setError(error.message);
-        } finally {
-            setLoading(false);
+            // Only update state if the component is still mounted.
+            if (mounted.current) {
+                // Firebase provides structured error codes, let's make them user-friendly
+                let friendlyMessage = error.message;
+                if (error.code === 'auth/wrong-password') {
+                    friendlyMessage = 'Incorrect password. Please try again.';
+                } else if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
+                    friendlyMessage = 'No account found or invalid credentials.';
+                } else if (error.code === 'auth/email-already-in-use') {
+                    friendlyMessage = 'An account already exists with this email address.';
+                } else if (error.code === 'auth/weak-password') {
+                    friendlyMessage = 'Password should be at least 6 characters.';
+                }
+                setError(friendlyMessage);
+                setLoading(false);
+            }
         }
     };
     
@@ -327,6 +352,13 @@ const AuthScreen: React.FC<{setError: (e: string | null) => void}> = ({setError}
                         </button>
                     </div>
                 </form>
+
+                {error && (
+                    <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded-lg mt-6 text-center" role="alert">
+                        <p>{error}</p>
+                    </div>
+                )}
+
                 <div className="text-center mt-6">
                     <button onClick={() => { setIsLogin(!isLogin); setError(null); }} className="inline-block align-baseline font-bold text-sm text-blue-400 hover:text-blue-300">
                         {isLogin ? "Don't have an account? Sign Up" : "Already have an account? Sign In"}
