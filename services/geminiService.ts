@@ -2,6 +2,208 @@ import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { UserProfile, WorkoutPlan, WorkoutDay } from '../types';
 import { YoutubeTranscript } from 'youtube-transcript';
 
+// Goal-specific programming principles
+interface GoalProgrammingRules {
+  repRanges: string;
+  setsPerExercise: string;
+  setsPerMuscleGroupPerWeek: string;
+  restPeriods: string;
+  frequency: string;
+  progressionStrategy: string;
+  exerciseSelection: string;
+  conditioning: string;
+}
+
+const GOAL_PROGRAMMING_RULES: Record<string, GoalProgrammingRules> = {
+  "Build Muscle": {
+    repRanges: "6-12 reps for main compounds, 8-15 reps for accessories",
+    setsPerExercise: "3-6 sets per exercise",
+    setsPerMuscleGroupPerWeek: "10-20 sets per muscle group per week",
+    restPeriods: "2-3 minutes between compound sets, 1-2 minutes for accessories",
+    frequency: "Each muscle group trained 2-3x per week",
+    progressionStrategy: "Progressive overload via weight increases (2.5-5lb weekly), additional reps, or extra sets",
+    exerciseSelection: "Prioritize compound movements (squats, deadlifts, presses), add isolation for targeted growth",
+    conditioning: "Limited cardio (2-3x per week, 15-20 min) to preserve muscle building energy"
+  },
+  "Improve Endurance": {
+    repRanges: "12-25+ reps for muscular endurance, varied rep ranges for cardiovascular endurance",
+    setsPerExercise: "2-4 sets with shorter rest periods",
+    setsPerMuscleGroupPerWeek: "8-15 sets per muscle group per week",
+    restPeriods: "30-90 seconds between sets to maintain elevated heart rate",
+    frequency: "4-6 training sessions per week with active recovery",
+    progressionStrategy: "Increase training duration, reduce rest periods, add complexity or volume",
+    exerciseSelection: "Circuit training, supersets, functional movements, compound exercises",
+    conditioning: "High frequency cardio (4-5x per week), include HIIT, steady state, and metabolic circuits"
+  },
+  "Lose Weight": {
+    repRanges: "8-15 reps with emphasis on metabolic stress",
+    setsPerExercise: "3-5 sets with minimal rest",
+    setsPerMuscleGroupPerWeek: "8-16 sets per muscle group per week",
+    restPeriods: "30-60 seconds to maintain caloric burn and heart rate elevation",
+    frequency: "5-6 sessions per week combining strength and cardio",
+    progressionStrategy: "Increase training density, add metabolic finishers, progress conditioning intensity",
+    exerciseSelection: "Full-body compound movements, circuits, supersets, plyometrics",
+    conditioning: "High volume cardio (5-6x per week), HIIT circuits, metabolic conditioning"
+  },
+  "Increase Strength": {
+    repRanges: "1-6 reps for main lifts, 6-8 reps for accessories",
+    setsPerExercise: "3-8 sets for main movements, 2-4 for accessories",
+    setsPerMuscleGroupPerWeek: "6-12 sets per muscle group per week (focused on big 3)",
+    restPeriods: "3-5 minutes between main sets, 2-3 minutes for accessories",
+    frequency: "3-4 sessions per week focusing on major movement patterns",
+    progressionStrategy: "Linear progression on main lifts, percentage-based programming, deload weeks",
+    exerciseSelection: "Prioritize squat, bench, deadlift, overhead press and their variations",
+    conditioning: "Minimal cardio to preserve strength gains, focus on recovery"
+  },
+  "Improve Cardio": {
+    repRanges: "15-25+ reps when using weights, focus on time-based intervals",
+    setsPerExercise: "2-4 sets with active recovery",
+    setsPerMuscleGroupPerWeek: "6-12 sets per muscle group per week",
+    restPeriods: "Active recovery or 30-60 seconds",
+    frequency: "5-6 sessions per week with variety in intensity",
+    progressionStrategy: "Increase duration, intensity, or complexity of cardio sessions",
+    exerciseSelection: "Bodyweight circuits, plyometrics, functional movements",
+    conditioning: "Primary focus - varied heart rate zones, LISS, HIIT, tempo work, sport-specific conditioning"
+  },
+  "General Fitness": {
+    repRanges: "8-15 reps for balanced strength and endurance",
+    setsPerExercise: "2-4 sets per exercise",
+    setsPerMuscleGroupPerWeek: "8-16 sets per muscle group per week",
+    restPeriods: "1-2 minutes between sets",
+    frequency: "3-5 sessions per week with balanced training",
+    progressionStrategy: "Gradual increases in weight, reps, or training complexity",
+    exerciseSelection: "Mix of compound and isolation exercises, functional movements",
+    conditioning: "Moderate cardio (3-4x per week), varied intensity and duration"
+  }
+};
+
+// Helper function to generate goal-specific programming instructions
+const generateGoalSpecificInstructions = (goals: string[]): string => {
+  if (goals.length === 0) return "";
+  
+  let instructions = "\n**GOAL-SPECIFIC PROGRAMMING REQUIREMENTS:**\n";
+  
+  // Handle multiple goals with priority and integration
+  if (goals.length === 1) {
+    const goal = goals[0];
+    const rules = GOAL_PROGRAMMING_RULES[goal];
+    if (rules) {
+      instructions += `\nFor "${goal}" goal, you MUST follow these evidence-based principles:\n`;
+      instructions += `- Rep Ranges: ${rules.repRanges}\n`;
+      instructions += `- Sets: ${rules.setsPerExercise}\n`;
+      instructions += `- Volume: ${rules.setsPerMuscleGroupPerWeek}\n`;
+      instructions += `- Rest Periods: ${rules.restPeriods}\n`;
+      instructions += `- Training Frequency: ${rules.frequency}\n`;
+      instructions += `- Progression: ${rules.progressionStrategy}\n`;
+      instructions += `- Exercise Selection: ${rules.exerciseSelection}\n`;
+      instructions += `- Conditioning: ${rules.conditioning}\n`;
+    }
+  } else {
+    // Multiple goals - need to balance and integrate
+    instructions += `\nYou have MULTIPLE GOALS: ${goals.join(', ')}. You must INTELLIGENTLY INTEGRATE these goals:\n`;
+    
+    goals.forEach((goal, index) => {
+      const rules = GOAL_PROGRAMMING_RULES[goal];
+      if (rules) {
+        instructions += `\n${index + 1}. For "${goal}":\n`;
+        instructions += `   - Rep Ranges: ${rules.repRanges}\n`;
+        instructions += `   - Exercise Selection: ${rules.exerciseSelection}\n`;
+        instructions += `   - Conditioning: ${rules.conditioning}\n`;
+      }
+    });
+    
+    // Add integration guidelines
+    instructions += `\n**GOAL INTEGRATION STRATEGY:**\n`;
+    if (goals.includes("Build Muscle") && goals.includes("Improve Endurance")) {
+      instructions += "- Use periodization: Strength-focused phases (6-8 reps) alternated with endurance phases (12-20 reps)\n";
+      instructions += "- Include both compound movements AND metabolic circuits\n";
+      instructions += "- Moderate cardio frequency (3-4x/week) to support endurance without compromising muscle growth\n";
+    }
+    if (goals.includes("Build Muscle") && goals.includes("Lose Weight")) {
+      instructions += "- Prioritize compound movements with shorter rest periods (60-90 sec)\n";
+      instructions += "- Include metabolic finishers after strength work\n";
+      instructions += "- Higher training frequency (4-5x/week) for increased caloric expenditure\n";
+    }
+    if (goals.includes("Increase Strength") && goals.includes("Improve Endurance")) {
+      instructions += "- Primary focus on strength (1-6 reps) with endurance accessories (12-20 reps)\n";
+      instructions += "- Separate strength and cardio sessions when possible\n";
+      instructions += "- Use power endurance exercises (kettlebell complexes, barbell circuits)\n";
+    }
+  }
+  
+  return instructions;
+};
+
+// Validation function to check if a workout plan aligns with stated goals
+const validateWorkoutPlan = (plan: WorkoutPlan, goals: string[]): { isValid: boolean; issues: string[] } => {
+  const issues: string[] = [];
+  
+  if (goals.length === 0) return { isValid: true, issues: [] };
+  
+  // Sample a few days for validation
+  const sampleDays = plan.days.slice(0, Math.min(3, plan.days.length));
+  
+  for (const goal of goals) {
+    switch (goal) {
+      case "Build Muscle":
+        // Check for hypertrophy rep ranges
+        let hasHypertrophyReps = false;
+        sampleDays.forEach(day => {
+          day.strength.forEach(ex => {
+            const reps = typeof ex.reps === 'string' ? ex.reps : String(ex.reps);
+            if (reps.includes('6') || reps.includes('8') || reps.includes('10') || reps.includes('12')) {
+              hasHypertrophyReps = true;
+            }
+          });
+        });
+        if (!hasHypertrophyReps) {
+          issues.push("Build Muscle goal requires 6-12 rep ranges, but plan lacks hypertrophy-focused sets");
+        }
+        break;
+        
+      case "Improve Endurance":
+        // Check for endurance elements
+        let hasEnduranceWork = false;
+        sampleDays.forEach(day => {
+          if (day.conditioning && day.conditioning.durationMinutes >= 10) {
+            hasEnduranceWork = true;
+          }
+          day.strength.forEach(ex => {
+            const reps = typeof ex.reps === 'string' ? ex.reps : String(ex.reps);
+            if (reps.includes('15') || reps.includes('20') || reps.includes('AMRAP')) {
+              hasEnduranceWork = true;
+            }
+          });
+        });
+        if (!hasEnduranceWork) {
+          issues.push("Improve Endurance goal requires high-rep work or conditioning, but plan lacks endurance elements");
+        }
+        break;
+        
+      case "Increase Strength":
+        // Check for strength rep ranges
+        let hasStrengthReps = false;
+        sampleDays.forEach(day => {
+          day.strength.forEach(ex => {
+            const reps = typeof ex.reps === 'string' ? ex.reps : String(ex.reps);
+            if (['1', '2', '3', '4', '5'].some(rep => reps.includes(rep))) {
+              hasStrengthReps = true;
+            }
+          });
+        });
+        if (!hasStrengthReps) {
+          issues.push("Increase Strength goal requires 1-6 rep ranges, but plan lacks strength-focused sets");
+        }
+        break;
+    }
+  }
+  
+  return {
+    isValid: issues.length === 0,
+    issues
+  };
+};
+
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 const YOUTUBE_API_KEY = import.meta.env.VITE_YOUTUBE_API_KEY;
 
@@ -286,7 +488,10 @@ export const createPlanFromSummary = async (
     .map(([key, value]) => `${key}: ${value}${userProfile.performanceMetrics.unit}`)
     .join(', ');
 
-  const systemInstruction = `You are an elite fitness architect and AI coach. Your task is to use a high-level summary of a user's interests to generate a personalized, multi-disciplinary workout plan for the specified duration. The final output MUST be a valid JSON object. Do not include any markdown formatting like \`\`\`json or surrounding text, only the raw JSON object.
+  // Generate goal-specific programming instructions
+  const goalInstructions = generateGoalSpecificInstructions(userProfile.goals);
+
+  let systemInstruction = `You are an elite fitness architect and AI coach. Your task is to generate a scientifically-backed, goal-oriented workout plan. The final output MUST be a valid JSON object. Do not include any markdown formatting like \`\`\`json or surrounding text, only the raw JSON object.
 
 User Profile:
 - Fitness Level: ${userProfile.fitnessLevel}
@@ -296,10 +501,19 @@ User Profile:
 - Desired Plan Duration: ${userProfile.planDurationWeeks} weeks.
 - 1-Rep Maxes: ${performanceMetricsString || 'Not provided'}
 
-Consolidated Workout Principles (from user's knowledge base):
+${goalInstructions}
+
+**ADDITIONAL CONTEXT (User's Uploaded Content Analysis):**
 ${consolidatedSummary}
 
-Generate a cohesive and effective ${userProfile.planDurationWeeks}-week workout plan tailored to the user's profile. Use the consolidated principles as your primary inspiration. For strength exercises where a 1RM is provided, prescribe weights as a percentage of their 1RM (e.g., "5x5 @ 80% 1RM"). The plan should contain ${userProfile.daysPerWeek} workout days per week for ${userProfile.planDurationWeeks} weeks.
+**CRITICAL INSTRUCTIONS:**
+1. The goal-specific programming requirements above are MANDATORY - they override any conflicting information from the user's uploaded content
+2. Use the uploaded content as inspiration for exercise selection and workout style, but ensure all programming parameters align with the stated goals
+3. For strength exercises where a 1RM is provided, prescribe weights as percentages (e.g., "5x5 @ 80% 1RM")
+4. Include progressive overload strategies throughout the ${userProfile.planDurationWeeks} weeks
+5. The plan should contain exactly ${userProfile.daysPerWeek} workout days per week for ${userProfile.planDurationWeeks} weeks
+
+**PRIORITY ORDER:** Goals > Programming Science > User Content Style
 
 The JSON structure MUST adhere to the following format:
 {
@@ -324,36 +538,74 @@ The JSON structure MUST adhere to the following format:
   ]
 }`;
   
-  try {
-    const stream = await ai.models.generateContentStream({
-      model: "gemini-2.5-flash",
-      contents: "Generate the workout plan JSON based on the user profile and consolidated principles.",
-      config: {
-        systemInstruction,
-      },
-    });
+  let attempts = 0;
+  const maxAttempts = 2;
+  
+  while (attempts < maxAttempts) {
+    try {
+      attempts++;
+      console.log(`Generating workout plan (attempt ${attempts}/${maxAttempts})...`);
+      
+      const stream = await ai.models.generateContentStream({
+        model: "gemini-2.5-flash",
+        contents: "Generate the workout plan JSON based on the user profile and goal-specific requirements.",
+        config: {
+          systemInstruction,
+        },
+      });
 
-    let jsonText = '';
-    for await (const chunk of stream) {
-      jsonText += chunk.text;
-    }
-    
-    // Clean potential markdown formatting
-    if (jsonText.startsWith('```json')) {
-      jsonText = jsonText.substring(7, jsonText.length - 3).trim();
-    } else if (jsonText.startsWith('```')) {
-       jsonText = jsonText.substring(3, jsonText.length - 3).trim();
-    }
-    
-    return JSON.parse(jsonText) as WorkoutPlan;
+      let jsonText = '';
+      for await (const chunk of stream) {
+        jsonText += chunk.text;
+      }
+      
+      // Clean potential markdown formatting
+      if (jsonText.startsWith('```json')) {
+        jsonText = jsonText.substring(7, jsonText.length - 3).trim();
+      } else if (jsonText.startsWith('```')) {
+         jsonText = jsonText.substring(3, jsonText.length - 3).trim();
+      }
+      
+      const plan = JSON.parse(jsonText) as WorkoutPlan;
+      
+      // Validate the plan against goals
+      const validation = validateWorkoutPlan(plan, userProfile.goals);
+      
+      if (validation.isValid) {
+        console.log("✅ Generated plan successfully meets goal requirements");
+        return plan;
+      } else {
+        console.warn("⚠️ Generated plan validation issues:", validation.issues);
+        
+        if (attempts < maxAttempts) {
+          // Retry with additional constraints
+          const additionalConstraints = `\n\n**PREVIOUS ATTEMPT FAILED VALIDATION:**\n${validation.issues.join('\n')}\n\nYou MUST address these issues in the new plan.`;
+          systemInstruction += additionalConstraints;
+          console.log("🔄 Retrying with additional constraints...");
+          continue;
+        } else {
+          // Return plan with warnings if max attempts reached
+          console.warn("⚠️ Returning plan despite validation issues after max attempts");
+          return plan;
+        }
+      }
 
-  } catch (error) {
-    console.error("Error creating plan from summary:", error);
-    if (error instanceof Error) {
-        throw new Error(`Failed to generate workout plan. ${error.message}`);
+    } catch (error) {
+      console.error(`Error creating plan (attempt ${attempts}):`, error);
+      
+      if (attempts >= maxAttempts) {
+        if (error instanceof Error) {
+            throw new Error(`Failed to generate workout plan after ${maxAttempts} attempts. ${error.message}`);
+        }
+        throw new Error(`Failed to generate workout plan after ${maxAttempts} attempts. An unknown error occurred.`);
+      }
+      
+      // Wait before retry
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
-    throw new Error("Failed to generate workout plan. An unknown error occurred.");
   }
+  
+  throw new Error("Unexpected end of plan generation process");
 };
 
 export const adjustWorkoutDuration = async (
@@ -403,4 +655,41 @@ ${JSON.stringify(workoutDay, null, 2)}
     console.error("Error adjusting workout duration:", error);
     throw new Error("Failed to adjust workout duration with AI.");
   }
+};
+
+// Export validation function for use in UI
+export const validateWorkoutPlanForGoals = validateWorkoutPlan;
+
+// Helper function to suggest progressive overload for next week
+export const generateProgressiveOverload = (currentWeek: number, exercise: { name: string; sets: string | number; reps: string | number; notes?: string }, goals: string[]): string => {
+  const suggestions: string[] = [];
+  
+  // Extract current parameters
+  const sets = typeof exercise.sets === 'number' ? exercise.sets : parseInt(String(exercise.sets)) || 3;
+  const reps = typeof exercise.reps === 'string' ? exercise.reps : String(exercise.reps);
+  
+  // Goal-specific progression strategies
+  if (goals.includes("Build Muscle")) {
+    if (currentWeek <= 2) {
+      suggestions.push("Increase weight by 2.5-5lbs if all reps completed cleanly");
+    } else if (currentWeek <= 4) {
+      suggestions.push("Add 1-2 reps per set OR increase weight by 2.5lbs");
+    } else {
+      suggestions.push("Consider adding an extra set OR increase weight");
+    }
+  }
+  
+  if (goals.includes("Increase Strength")) {
+    if (currentWeek <= 2) {
+      suggestions.push("Increase weight by 5-10lbs for compound movements");
+    } else {
+      suggestions.push("Add weight or consider deload week if hitting plateau");
+    }
+  }
+  
+  if (goals.includes("Improve Endurance")) {
+    suggestions.push("Reduce rest periods by 10-15 seconds OR add 2-5 reps");
+  }
+  
+  return suggestions.length > 0 ? suggestions.join(". ") : "Maintain current parameters and focus on form";
 };

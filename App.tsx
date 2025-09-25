@@ -1,10 +1,14 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { registerServiceWorker, showInstallPrompt, requestNotificationPermission } from './services/pwaService';
 import { AppView, UserProfile, WorkoutPlan, Exercise, ConditioningBlock, KnowledgeSource, WorkoutDay, WorkoutLog } from './types';
 import { UserIcon, GenerateIcon, WorkoutIcon, HistoryIcon, ClockIcon, LogoutIcon } from './components/icons';
-import { createPlanFromSummary, summarizeKnowledge, analyzeContent, adjustWorkoutDuration } from './services/geminiService';
+import { createPlanFromSummary, summarizeKnowledge, analyzeContent, adjustWorkoutDuration, validateWorkoutPlanForGoals, generateProgressiveOverload } from './services/geminiService';
 import Timer from './components/Timer';
+import SectionTimer from './components/SectionTimer';
 import Loader from './components/Loader';
+import PWAInstallBanner from './components/PWAInstallBanner';
+import PWATestingPanel from './components/PWATestingPanel';
 import type { User } from '@supabase/supabase-js';
 import { isSupabaseConfigured, onAuthStateChanged, signUp, signIn, signOut, loadUserData, saveUserProfile, saveWorkoutPlan, saveKnowledgeSources, saveWorkoutHistory } from './services/supabaseService';
 
@@ -52,11 +56,21 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const [activeWorkoutDay, setActiveWorkoutDay] = useState<WorkoutDay | null>(null);
+  const [selectedWorkoutDay, setSelectedWorkoutDay] = useState<WorkoutDay | null>(null);
   const isAnalyzingRef = useRef<boolean>(false);
   const saveInProgressRef = useRef<boolean>(false);
   const currentSourcesRef = useRef<KnowledgeSource[]>([]);
 
   useEffect(() => {
+    // Initialize PWA functionality
+    const initializePWA = async () => {
+      await registerServiceWorker();
+      showInstallPrompt();
+      await requestNotificationPermission();
+    };
+    
+    initializePWA().catch(console.error);
+    
     const unsubscribe = onAuthStateChanged(async (authUser) => {
       setIsAppLoading(true);
       setError(null);
@@ -270,6 +284,11 @@ const App: React.FC = () => {
     }
   }, [userProfile, knowledgeSources, handleSetWorkoutPlan]);
 
+  const handleViewWorkout = (day: WorkoutDay) => {
+    setSelectedWorkoutDay(day);
+    setCurrentView(AppView.WORKOUT_SUMMARY);
+  };
+
   const handleStartWorkout = (day: WorkoutDay) => {
     setActiveWorkoutDay(day);
     setCurrentView(AppView.ACTIVE_WORKOUT);
@@ -310,7 +329,9 @@ const App: React.FC = () => {
       case AppView.GENERATE:
         return <GenerateScreen onAnalyze={handleAnalyzeSources} onGenerate={handleGeneratePlan} sources={knowledgeSources} error={error} setError={setError} />;
       case AppView.WORKOUT:
-        return workoutPlan ? <WorkoutScreen plan={workoutPlan} onStartWorkout={handleStartWorkout} /> : <div className="text-center p-8">No workout plan generated yet. Go to the 'Generate' tab!</div>;
+        return workoutPlan ? <WorkoutScreen plan={workoutPlan} onViewWorkout={handleViewWorkout} /> : <div className="text-center p-8">No workout plan generated yet. Go to the 'Generate' tab!</div>;
+      case AppView.WORKOUT_SUMMARY:
+        return selectedWorkoutDay ? <WorkoutSummaryScreen day={selectedWorkoutDay} planName={workoutPlan?.planName || ''} onStartWorkout={handleStartWorkout} onBack={() => setCurrentView(AppView.WORKOUT)} /> : <div className="text-center p-8">No workout selected.</div>;
       case AppView.ACTIVE_WORKOUT:
         return activeWorkoutDay ? <ActiveWorkoutScreen day={activeWorkoutDay} planName={workoutPlan?.planName || ''} onFinish={handleFinishWorkout} /> : <div className="text-center p-8">No active workout.</div>;
        case AppView.HISTORY:
@@ -332,6 +353,8 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 flex flex-col font-sans">
+        <PWAInstallBanner />
+        
         {!isSupabaseConfigured && (
             <div className="bg-yellow-600 text-center p-2 text-white font-semibold">
                 Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env.local to enable login and data persistence.
@@ -367,6 +390,9 @@ const App: React.FC = () => {
                     ))}
                     </div>
                 </nav>
+                
+                {/* PWA Testing Panel (dev only) */}
+                <PWATestingPanel />
             </>
         )}
     </div>
@@ -765,13 +791,39 @@ const GenerateScreen: React.FC<{
 
 
 // --- WORKOUT SCREEN ---
-const WorkoutScreen: React.FC<{ plan: WorkoutPlan; onStartWorkout: (day: WorkoutDay) => void; }> = ({ plan, onStartWorkout }) => {
+const WorkoutScreen: React.FC<{ plan: WorkoutPlan; onViewWorkout: (day: WorkoutDay) => void; }> = ({ plan, onViewWorkout }) => {
   const [selectedWeek, setSelectedWeek] = useState(1);
   const daysForWeek = plan.days.filter(d => d.week === selectedWeek);
 
+  // Validate plan against user goals
+  const validation = validateWorkoutPlanForGoals(plan, userProfile.goals);
+
   return (
     <div className="space-y-6">
-      <h2 className="text-3xl font-bold text-blue-400">{plan.planName}</h2>
+      <div>
+        <h2 className="text-3xl font-bold text-blue-400">{plan.planName}</h2>
+        
+        {/* Goal Validation Feedback */}
+        <div className="mt-3">
+          {validation.isValid ? (
+            <div className="bg-green-900/50 border border-green-700 text-green-300 px-3 py-2 rounded-lg text-sm">
+              ✅ This plan is optimized for your goals: {userProfile.goals.join(', ')}
+            </div>
+          ) : (
+            <div className="bg-yellow-900/50 border border-yellow-700 text-yellow-300 px-3 py-2 rounded-lg text-sm">
+              ⚠️ Plan generated but may not fully optimize for: {userProfile.goals.join(', ')}
+              <details className="mt-1">
+                <summary className="cursor-pointer text-yellow-400 hover:text-yellow-200">View recommendations</summary>
+                <ul className="mt-2 text-xs space-y-1">
+                  {validation.issues.map((issue, i) => (
+                    <li key={i}>• {issue}</li>
+                  ))}
+                </ul>
+              </details>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Week Selector */}
       <div className="flex space-x-2 overflow-x-auto pb-2">
@@ -786,19 +838,138 @@ const WorkoutScreen: React.FC<{ plan: WorkoutPlan; onStartWorkout: (day: Workout
       {/* Workout Days */}
       <div className="space-y-4">
         {daysForWeek.map((day, index) => (
-          <div key={index} className="bg-gray-800 p-4 rounded-lg shadow-md">
+          <div key={index} className="bg-gray-800 p-4 rounded-lg shadow-md cursor-pointer hover:bg-gray-700 transition-colors" onClick={() => onViewWorkout(day)}>
             <div className="flex justify-between items-center">
               <div>
                 <h3 className="text-xl font-bold text-gray-200">Day {day.day} - {day.focus}</h3>
                 <p className="text-sm text-gray-400 flex items-center mt-1"><ClockIcon className="w-4 h-4 mr-1.5" /> Est. {day.estimatedDurationMinutes || '60'} mins</p>
               </div>
-              <button onClick={() => onStartWorkout(day)} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-5 rounded-lg transition-colors">
-                Start
-              </button>
+              <div className="text-gray-400 text-sm">Tap to view</div>
             </div>
           </div>
         ))}
       </div>
+    </div>
+  );
+};
+
+
+// --- WORKOUT SUMMARY SCREEN ---
+const WorkoutSummaryScreen: React.FC<{ 
+  day: WorkoutDay; 
+  planName: string; 
+  onStartWorkout: (day: WorkoutDay) => void; 
+  onBack: () => void; 
+}> = ({ day, planName, onStartWorkout, onBack }) => {
+  
+  const getSectionDuration = (sectionName: string, exercises: Exercise[]): number => {
+    // AI-suggested durations based on section type
+    switch (sectionName.toLowerCase()) {
+      case 'warm-up':
+        return 5; // 5 minutes for warm-up
+      case 'strength':
+      case 'main lifts':
+        // Calculate based on sets and exercises
+        const totalSets = exercises.reduce((acc, ex) => {
+          const sets = typeof ex.sets === 'number' ? ex.sets : 3;
+          return acc + sets;
+        }, 0);
+        // Estimate 45-60 seconds per set including rest
+        return Math.max(Math.ceil(totalSets * 0.75), 10); // Minimum 10 minutes
+      case 'cooldown':
+        return 5; // 5 minutes for cooldown
+      default:
+        return 10;
+    }
+  };
+
+  const renderExerciseSection = (title: string, exercises: Exercise[], duration?: number) => {
+    if (!exercises || exercises.length === 0) return null;
+    
+    const sectionDuration = duration || getSectionDuration(title, exercises);
+    
+    return (
+      <div className="bg-gray-800 p-4 rounded-lg">
+        <div className="flex justify-between items-center mb-3">
+          <h3 className="text-xl font-bold text-blue-400">{title}</h3>
+          <div className="flex items-center text-gray-400 text-sm">
+            <ClockIcon className="w-4 h-4 mr-1" />
+            {sectionDuration} min
+          </div>
+        </div>
+        <div className="space-y-2">
+          {exercises.map((ex, index) => (
+            <div key={index} className="bg-gray-700 p-3 rounded">
+              <p className="font-semibold text-gray-200">{ex.name}</p>
+              <p className="text-sm text-gray-400">{ex.sets} sets × {ex.reps} reps</p>
+              {ex.notes && <p className="text-xs text-gray-500 mt-1 italic">{ex.notes}</p>}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const totalDuration = day.estimatedDurationMinutes || 
+    getSectionDuration('warm-up', day.warmup) + 
+    getSectionDuration('strength', day.strength) +
+    (day.conditioning?.durationMinutes || 0) +
+    getSectionDuration('cooldown', day.cooldown);
+
+  return (
+    <div className="space-y-6 pb-6">
+      <div className="flex items-center space-x-4">
+        <button onClick={onBack} className="text-gray-400 hover:text-blue-400 transition-colors">
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <div>
+          <h2 className="text-2xl font-bold text-gray-200">Week {day.week}, Day {day.day}</h2>
+          <p className="text-xl text-blue-400">{day.focus}</p>
+        </div>
+      </div>
+
+      <div className="bg-gray-800 p-4 rounded-lg flex justify-between items-center">
+        <div className="flex items-center space-x-2">
+          <ClockIcon className="w-5 h-5 text-gray-400" />
+          <span className="text-gray-300">Total Duration: {totalDuration} minutes</span>
+        </div>
+        <button 
+          onClick={() => onStartWorkout(day)} 
+          className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg transition-colors"
+        >
+          Start Workout
+        </button>
+      </div>
+
+      {renderExerciseSection("Warm-up", day.warmup)}
+      {renderExerciseSection("Strength / Main Lifts", day.strength)}
+      
+      {day.conditioning && (
+        <div className="bg-gray-800 p-4 rounded-lg">
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="text-xl font-bold text-blue-400">Conditioning</h3>
+            <div className="flex items-center text-gray-400 text-sm">
+              <ClockIcon className="w-4 h-4 mr-1" />
+              {day.conditioning.durationMinutes} min ({day.conditioning.type})
+            </div>
+          </div>
+          <div className="space-y-2">
+            {day.conditioning.exercises.map((ex, index) => (
+              <div key={index} className="bg-gray-700 p-3 rounded">
+                <p className="font-semibold text-gray-200">{ex.name}</p>
+                <p className="text-sm text-gray-400">{ex.reps} reps</p>
+              </div>
+            ))}
+            {day.conditioning.notes && (
+              <p className="text-xs text-gray-500 mt-2 italic">{day.conditioning.notes}</p>
+            )}
+          </div>
+        </div>
+      )}
+      
+      {renderExerciseSection("Cooldown", day.cooldown)}
     </div>
   );
 };
@@ -816,7 +987,16 @@ const ActiveWorkoutScreen: React.FC<{ day: WorkoutDay; planName: string; onFinis
         
         const processExercises = (exercises: Exercise[]) => {
             exercises.forEach(ex => {
-                 const numSets = typeof ex.sets === 'string' ? 3 : ex.sets; // Default to 3 sets if AMRAP/etc.
+                 // Parse the sets value properly
+                 let numSets: number;
+                 if (typeof ex.sets === 'number') {
+                     numSets = ex.sets;
+                 } else {
+                     // For AMRAP, EMOM, etc., check if there's a number in the string
+                     const match = ex.sets.match(/(\d+)/);
+                     numSets = match ? parseInt(match[1]) : 1; // Default to 1 set for time-based workouts
+                 }
+                 
                  loggedExercises.push({
                      name: ex.name,
                      sets: Array.from({length: numSets}, () => ({reps: '', weight: ''}))
@@ -870,6 +1050,33 @@ const ActiveWorkoutScreen: React.FC<{ day: WorkoutDay; planName: string; onFinis
         }
     };
     
+    const getSectionDuration = (sectionName: string, exercises: Exercise[]): number => {
+        // AI-suggested durations based on section type
+        switch (sectionName.toLowerCase()) {
+            case 'warm-up':
+                return 5; // 5 minutes for warm-up
+            case 'strength':
+            case 'strength / main lifts':
+                // Calculate based on sets and exercises
+                const totalSets = exercises.reduce((acc, ex) => {
+                    let sets: number;
+                    if (typeof ex.sets === 'number') {
+                        sets = ex.sets;
+                    } else {
+                        const match = ex.sets.match(/(\d+)/);
+                        sets = match ? parseInt(match[1]) : 3;
+                    }
+                    return acc + sets;
+                }, 0);
+                // Estimate 45-60 seconds per set including rest
+                return Math.max(Math.ceil(totalSets * 0.75), 10); // Minimum 10 minutes
+            case 'cooldown':
+                return 5; // 5 minutes for cooldown
+            default:
+                return 10;
+        }
+    };
+
     const renderExerciseBlock = (title: string, exercises: Exercise[], isLoggable: boolean = true) => {
         let exerciseCounter = -1;
         
@@ -880,9 +1087,19 @@ const ActiveWorkoutScreen: React.FC<{ day: WorkoutDay; planName: string; onFinis
         }
 
         if (!exercises || exercises.length === 0) return null;
+        
+        const sectionDuration = getSectionDuration(title, exercises);
+        
         return (
             <div>
                 <h3 className="text-xl font-bold text-blue-400 mb-2">{title}</h3>
+                
+                {/* Section Timer */}
+                <SectionTimer 
+                    durationMinutes={sectionDuration} 
+                    sectionName={title}
+                />
+                
                 <div className="space-y-3">
                     {exercises.map((ex, index) => (
                         <div key={index} className="bg-gray-800 p-3 rounded-lg">

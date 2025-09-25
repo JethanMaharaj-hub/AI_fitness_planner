@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { ConditioningType } from '../types';
+import { requestWakeLock, releaseWakeLock, saveTimerState, restoreTimerState, clearTimerState } from '../services/pwaService';
 
 interface TimerProps {
   type: ConditioningType | 'For Time';
@@ -12,6 +13,7 @@ const Timer: React.FC<TimerProps> = ({ type, durationMinutes }) => {
   const [time, setTime] = useState(totalSeconds);
   const [isActive, setIsActive] = useState(false);
   const [isFinished, setIsFinished] = useState(false);
+  const [wakeLock, setWakeLock] = useState<WakeLockSentinel | null>(null);
 
   // EMOM specific state
   const [currentRound, setCurrentRound] = useState(1);
@@ -32,34 +34,94 @@ const Timer: React.FC<TimerProps> = ({ type, durationMinutes }) => {
     setIsFinished(false);
     setTime(totalSeconds);
     setCurrentRound(1);
-  }, [totalSeconds]);
+    
+    // Release wake lock when resetting
+    if (wakeLock) {
+      releaseWakeLock(wakeLock);
+      setWakeLock(null);
+    }
+    
+    // Clear any saved timer state
+    clearTimerState(`${type}-conditioning-timer`);
+  }, [totalSeconds, wakeLock, type]);
 
   useEffect(() => {
     reset();
   }, [type, durationMinutes, reset]);
+
+  // Check for background timer state on component mount
+  useEffect(() => {
+    const checkBackgroundTimer = async () => {
+      const savedState = restoreTimerState(`${type}-conditioning-timer`);
+      if (savedState && savedState.remaining > 0) {
+        setTime(savedState.remaining);
+        // Recalculate current round for EMOM
+        if (type === 'EMOM') {
+          const elapsed = totalSeconds - savedState.remaining;
+          setCurrentRound(Math.floor(elapsed / 60) + 1);
+        }
+      }
+    };
+    
+    checkBackgroundTimer();
+  }, [type, totalSeconds]);
+
+  const handleStartPause = async () => {
+    if (isActive) {
+      // Pause timer
+      setIsActive(false);
+      if (wakeLock) {
+        releaseWakeLock(wakeLock);
+        setWakeLock(null);
+      }
+    } else if (!isFinished) {
+      // Start timer
+      setIsActive(true);
+      
+      // Request wake lock to keep screen on during conditioning
+      try {
+        const lock = await requestWakeLock();
+        setWakeLock(lock);
+      } catch (error) {
+        console.warn('Wake lock failed:', error);
+      }
+    }
+  };
 
   useEffect(() => {
     let interval: ReturnType<typeof setTimeout> | null = null;
     if (isActive && !isFinished) {
       interval = setInterval(() => {
         setTime((prevTime) => {
-          if (prevTime <= 1) {
+          const newTime = prevTime - 1;
+          
+          // Save timer state for background recovery
+          saveTimerState(`${type}-conditioning-timer`, Date.now() - (totalSeconds - newTime) * 1000, totalSeconds);
+          
+          if (newTime <= 0) {
             setIsActive(false);
             setIsFinished(true);
             playBeep();
+            
+            // Release wake lock when finished
+            if (wakeLock) {
+              releaseWakeLock(wakeLock);
+              setWakeLock(null);
+            }
+            
+            clearTimerState(`${type}-conditioning-timer`);
             return 0;
           }
           
           if (type === 'EMOM') {
-            const nextTime = prevTime - 1;
             // If a minute has passed
-            if (nextTime % 60 === 0 && nextTime !== 0) {
+            if (newTime % 60 === 0 && newTime !== 0) {
               setCurrentRound(prev => prev + 1);
               playBeep();
             }
           }
           
-          return prevTime - 1;
+          return newTime;
         });
       }, 1000);
     }
@@ -110,7 +172,7 @@ const Timer: React.FC<TimerProps> = ({ type, durationMinutes }) => {
 
       <div className="flex justify-center space-x-4">
         <button
-          onClick={() => setIsActive(!isActive)}
+          onClick={handleStartPause}
           disabled={isFinished}
           className={`px-8 py-3 w-32 rounded-lg font-semibold text-lg ${isActive ? 'bg-yellow-500' : 'bg-green-500'} text-gray-900 transition-all transform hover:scale-105 disabled:bg-gray-700 disabled:opacity-50`}
         >

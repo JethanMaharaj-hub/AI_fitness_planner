@@ -1,0 +1,24 @@
+# PWA Icons Needed
+
+Please add the following icon files to the /public folder:
+
+## Required Icons:
+- icon-192.png (192x192 pixels)
+- icon-512.png (512x512 pixels)
+- favicon.ico (32x32 pixels)
+
+## Icon Requirements:
+- PNG format with transparent background
+- Simple, recognizable design
+- High contrast for visibility
+- Fitness/workout theme (dumbbell, timer, etc.)
+
+## Quick Icon Creation Options:
+1. **Canva**: Use their app icon templates
+2. **Figma**: Create simple icon with shapes
+3. **Online Icon Generators**: Search "PWA icon generator"
+4. **AI Tools**: Ask ChatGPT/Claude to describe an icon for DALL-E
+
+## Temporary Solution:
+For now, we'll create a simple colored square that works as a placeholder.
+Replace these with proper icons before final deployment.
