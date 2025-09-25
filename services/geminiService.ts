@@ -1,13 +1,116 @@
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { UserProfile, WorkoutPlan, WorkoutDay } from '../types';
+import { YoutubeTranscript } from 'youtube-transcript';
 
-const API_KEY = process.env.API_KEY;
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+const YOUTUBE_API_KEY = import.meta.env.VITE_YOUTUBE_API_KEY;
 
 if (!API_KEY) {
-  console.warn("API_KEY environment variable not set. Using mock data.");
+  console.warn("VITE_GEMINI_API_KEY environment variable not set. Using mock data.");
+} else {
+  console.log("Gemini API key loaded successfully");
+}
+
+if (!YOUTUBE_API_KEY) {
+  console.warn("VITE_YOUTUBE_API_KEY not set. YouTube analysis will be limited.");
+} else {
+  console.log("YouTube API key loaded successfully");
 }
 
 const ai = API_KEY ? new GoogleGenAI({ apiKey: API_KEY }) : null;
+
+// Extract YouTube video ID from various URL formats
+const extractYouTubeVideoId = (url: string): string | null => {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
+    /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/
+  ];
+  
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) return match[1];
+  }
+  
+  return null;
+};
+
+// Fetch YouTube video metadata using direct API calls (browser-compatible)
+const getYouTubeVideoData = async (videoUrl: string) => {
+  const videoId = extractYouTubeVideoId(videoUrl);
+  
+  if (!videoId) {
+    throw new Error('Invalid YouTube URL format');
+  }
+
+  if (!YOUTUBE_API_KEY) {
+    throw new Error('YouTube API key not configured');
+  }
+
+  try {
+    console.log(`🎬 Fetching video metadata for ${videoId}...`);
+    
+    const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoId}&key=${YOUTUBE_API_KEY}`;
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      throw new Error(`YouTube API request failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    const video = data.items?.[0];
+    
+    if (!video) {
+      throw new Error('Video not found');
+    }
+
+    const { snippet, contentDetails } = video;
+    return {
+      title: snippet?.title || '',
+      description: snippet?.description || '',
+      tags: snippet?.tags || [],
+      duration: contentDetails?.duration || '',
+      channelTitle: snippet?.channelTitle || '',
+      publishedAt: snippet?.publishedAt || ''
+    };
+  } catch (error) {
+    console.error('Error fetching YouTube video data:', error);
+    throw new Error('Failed to fetch video information from YouTube API');
+  }
+};
+
+// Fetch YouTube video transcript
+const getYouTubeTranscript = async (videoUrl: string): Promise<string> => {
+  const videoId = extractYouTubeVideoId(videoUrl);
+  
+  if (!videoId) {
+    throw new Error('Invalid YouTube URL format');
+  }
+  
+  try {
+    console.log(`📝 Attempting to fetch transcript for video ${videoId}...`);
+    const transcript = await YoutubeTranscript.fetchTranscript(videoId);
+    
+    if (!transcript || transcript.length === 0) {
+      throw new Error('No transcript available for this video');
+    }
+    
+    const fullText = transcript
+      .map(item => item.text)
+      .join(' ')
+      .replace(/\s+/g, ' ') // Clean up multiple spaces
+      .trim();
+    
+    if (fullText.length < 10) {
+      throw new Error('Transcript too short or empty');
+    }
+    
+    console.log(`📝 Successfully extracted transcript from YouTube video ${videoId}: ${fullText.length} characters`);
+    return fullText;
+  } catch (error) {
+    console.error('Error fetching YouTube transcript:', error);
+    throw new Error('Failed to fetch YouTube transcript. Video may not have captions available or captions may be disabled.');
+  }
+};
 
 const MOCK_WORKOUT_PLAN: WorkoutPlan = {
   planName: "Mock Fusion Strength",
@@ -66,21 +169,71 @@ export const analyzeContent = async (
     return new Promise(resolve => setTimeout(() => resolve(mockSummary), 1000 + Math.random() * 1000));
   }
   
-  const systemInstruction = "You are a fitness expert. Analyze the provided content (an image of a workout or a YouTube URL). Succinctly summarize the workout structure (e.g., AMRAP, EMOM), list key exercises, and identify the overall training style (e.g., CrossFit, bodybuilding, functional fitness).";
+  const systemInstruction = "You are a fitness expert. Analyze the provided workout content. Succinctly summarize the workout structure (e.g., AMRAP, EMOM), list key exercises, and identify the overall training style (e.g., CrossFit, bodybuilding, functional fitness).";
   
-  const textPrompt = sourceType === 'image'
-    ? "Analyze the workout in this image."
-    : `Analyze the workout from this YouTube URL: ${data}`;
-
-  const parts: any[] = [{ text: textPrompt }];
+  let textPrompt: string;
+  const parts: any[] = [];
 
   if (sourceType === 'image') {
-    parts.unshift({
+    textPrompt = "Analyze the workout in this image.";
+    parts.push({
       inlineData: {
         mimeType: mimeType || 'image/jpeg',
         data: data,
       },
     });
+    parts.push({ text: textPrompt });
+  } else {
+    // For YouTube, try to get video metadata first, then transcript as backup
+    try {
+      console.log(`🎥 Analyzing YouTube video: ${data}`);
+      
+      // Try YouTube Data API first
+      try {
+        const videoData = await getYouTubeVideoData(data);
+        console.log(`📊 Got video metadata: "${videoData.title}"`);
+        
+        textPrompt = `Analyze this fitness video based on its metadata and provide a specific workout analysis:
+
+**Video Title:** ${videoData.title}
+**Description:** ${videoData.description.substring(0, 1000)}${videoData.description.length > 1000 ? '...' : ''}
+**Tags:** ${videoData.tags.join(', ')}
+**Duration:** ${videoData.duration}
+**Channel:** ${videoData.channelTitle}
+
+Based on this information, provide a specific analysis of this workout including:
+1. Workout structure (AMRAP, EMOM, circuit, strength training, etc.)
+2. Key exercises mentioned or implied by the title/description
+3. Training style (CrossFit, bodybuilding, functional fitness, etc.)
+4. Target fitness level and goals
+5. Equipment likely needed
+
+Provide a concise, specific analysis that can be used to create workout plans, not a generic framework.`;
+        
+        parts.push({ text: textPrompt });
+        
+      } catch (apiError) {
+        console.log('📝 YouTube API failed, trying transcript...');
+        
+        // Fallback to transcript
+        const transcript = await getYouTubeTranscript(data);
+        textPrompt = `Analyze this workout video transcript and provide a summary of the workout structure, key exercises, and training style:\n\n${transcript}`;
+        parts.push({ text: textPrompt });
+      }
+      
+    } catch (allErrors) {
+      console.error('All YouTube analysis methods failed:', allErrors);
+      
+      // Final fallback - analyze based on URL only
+      const videoId = extractYouTubeVideoId(data);
+      textPrompt = `Unable to access video content directly. Based on this YouTube fitness video URL: ${data}
+
+Video ID: ${videoId}
+
+Please provide a general analysis framework for fitness videos, focusing on what users should look for when analyzing workout content to help them create their own fitness plans. Keep this practical and specific to workout analysis.`;
+      
+      parts.push({ text: textPrompt });
+    }
   }
 
   try {

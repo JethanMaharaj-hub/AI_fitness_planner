@@ -70,6 +70,8 @@ export interface KnowledgeSource {
   summary?: string;
   status: 'pending' | 'analyzing' | 'complete' | 'error';
   error?: string;
+  // Storage file path for large content (when using Supabase Storage)
+  storageFilePath?: string;
 }
 
 // For workout logging

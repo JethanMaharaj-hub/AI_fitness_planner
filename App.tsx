@@ -5,9 +5,26 @@ import { UserIcon, GenerateIcon, WorkoutIcon, HistoryIcon, ClockIcon, LogoutIcon
 import { createPlanFromSummary, summarizeKnowledge, analyzeContent, adjustWorkoutDuration } from './services/geminiService';
 import Timer from './components/Timer';
 import Loader from './components/Loader';
-import { User } from 'firebase/auth';
-import { isFirebaseConfigured, onAuthStateChanged, signUp, signIn, signOut, loadUserData, saveUserProfile, saveWorkoutPlan, saveKnowledgeSources, saveWorkoutHistory } from './services/firebaseService';
+import type { User } from '@supabase/supabase-js';
+import { isSupabaseConfigured, onAuthStateChanged, signUp, signIn, signOut, loadUserData, saveUserProfile, saveWorkoutPlan, saveKnowledgeSources, saveWorkoutHistory } from './services/supabaseService';
 
+
+const getYouTubeThumbnail = (url: string): string => {
+  try {
+    const urlObj = new URL(url);
+    let videoId = '';
+    
+    if (urlObj.hostname === 'youtu.be') {
+      videoId = urlObj.pathname.slice(1).split('?')[0];
+    } else if (urlObj.hostname.includes('youtube.com')) {
+      videoId = urlObj.searchParams.get('v') || '';
+    }
+    
+    return videoId ? `https://img.youtube.com/vi/${videoId}/0.jpg` : '';
+  } catch {
+    return '';
+  }
+};
 
 const defaultProfile: UserProfile = {
   fitnessLevel: 'Intermediate',
@@ -35,29 +52,40 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const [activeWorkoutDay, setActiveWorkoutDay] = useState<WorkoutDay | null>(null);
+  const isAnalyzingRef = useRef<boolean>(false);
+  const saveInProgressRef = useRef<boolean>(false);
+  const currentSourcesRef = useRef<KnowledgeSource[]>([]);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(async (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(async (authUser) => {
       setIsAppLoading(true);
       setError(null);
-      if (firebaseUser) {
-        setUser(firebaseUser);
+      if (authUser) {
+        setUser(authUser);
         try {
-          const userData = await loadUserData(firebaseUser.uid);
+          const userData = await loadUserData(authUser.id);
           if (userData) {
             setUserProfile(userData.profile || defaultProfile);
             setWorkoutPlan(userData.workoutPlan || null);
-            setKnowledgeSources(userData.knowledgeSources || []);
+            
+            // Don't overwrite knowledge sources if we're currently analyzing
+            if (!isAnalyzingRef.current) {
+              console.log('Auth reload: Setting knowledge sources from DB:', userData.knowledgeSources?.length || 0);
+              setKnowledgeSources(userData.knowledgeSources || []);
+            } else {
+              console.log('Auth reload: Analysis in progress, not overwriting from DB');
+            }
+            
             setWorkoutHistory(userData.workoutHistory || []);
           } else {
              // New user, save default profile
-            await saveUserProfile(firebaseUser.uid, defaultProfile);
+            await saveUserProfile(authUser.id, defaultProfile);
             setUserProfile(defaultProfile); // ensure local state is also default
           }
         } catch (e: any) {
           console.error(e);
-          // Provide a more specific, actionable error message for the common Firestore setup issue.
-          setError("Could not connect to the Firestore database. This usually means the database hasn't been created yet in your Firebase project. Please go to the Firebase Console, select 'Firestore Database', and click 'Create database'. Also, check that your Security Rules allow access.");
+          // Provide a more specific, actionable error message for the common Supabase setup issues.
+          setError("Could not connect to Supabase. Ensure the tables exist, row level security policies allow access, and your Supabase credentials are configured.");
         }
       } else {
         setUser(null);
@@ -75,53 +103,135 @@ const App: React.FC = () => {
 
   const handleSetUserProfile = (profile: UserProfile) => {
     setUserProfile(profile);
-    if(user) saveUserProfile(user.uid, profile);
+    if(user) saveUserProfile(user.id, profile);
   }
 
   const handleSetWorkoutPlan = (plan: WorkoutPlan | null) => {
     setWorkoutPlan(plan);
-    if(user) saveWorkoutPlan(user.uid, plan);
+    if(user) saveWorkoutPlan(user.id, plan);
   }
 
   const handleSetKnowledgeSources = (sources: React.SetStateAction<KnowledgeSource[]>) => {
     const newSources = typeof sources === 'function' ? sources(knowledgeSources) : sources;
+    console.log('🔴 handleSetKnowledgeSources called with:', newSources.length, 'sources');
+    console.log('🔴 Current knowledgeSources state has:', knowledgeSources.length, 'sources');
+    console.log('🔴 Stack trace:', new Error().stack);
+    
+    if (newSources.length === 0 && knowledgeSources.length > 0) {
+      console.warn('⚠️ WARNING: State is being cleared from', knowledgeSources.length, 'to 0 sources!');
+      console.log('⚠️ Previous sources were:', knowledgeSources.map(s => ({id: s.id, status: s.status})));
+    }
+    
+    console.log('User context:', user ? user.id : 'No user');
     setKnowledgeSources(newSources);
-    if(user) saveKnowledgeSources(user.uid, newSources);
+    // Note: Database save happens after analysis completes via the final save callback
   };
 
   const handleSetWorkoutHistory = (logs: React.SetStateAction<WorkoutLog[]>) => {
     const newLogs = typeof logs === 'function' ? logs(workoutHistory) : logs;
     setWorkoutHistory(newLogs);
-    if(user) saveWorkoutHistory(user.uid, newLogs);
+    if(user) saveWorkoutHistory(user.id, newLogs);
   };
 
 
   const handleAnalyzeSources = useCallback(async (sourcesToAnalyze: Omit<KnowledgeSource, 'status' | 'id'>[]) => {
     setError(null);
-    const newSources: KnowledgeSource[] = sourcesToAnalyze.map(s => ({
+    isAnalyzingRef.current = true;
+    saveInProgressRef.current = false; // Reset save flag for new analysis
+    console.log('🚀 Starting analysis process, setting analyzing flag');
+    
+    const newSources: KnowledgeSource[] = sourcesToAnalyze.map((s, index) => ({
       ...s,
-      id: `${Date.now()}-${Math.random()}`,
+      id: `${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`,
       status: 'analyzing',
     }));
 
-    handleSetKnowledgeSources(prev => [...prev, ...newSources]);
+    // Add sources to state only (save to database after analysis completes)
+    console.log('📝 Adding sources to state (database save deferred until analysis completes)');
+    setKnowledgeSources(prev => {
+      const updated = [...prev, ...newSources];
+      currentSourcesRef.current = updated; // Keep ref in sync
+      return updated;
+    });
 
+    let completedCount = 0;
+    
     for (const source of newSources) {
       try {
+        console.log(`Starting analysis for source: ${source.id}`);
         const summary = await analyzeContent(source.type, source.data!, source.mimeType);
-        handleSetKnowledgeSources(prev => prev.map(s => {
-          if (s.id === source.id) {
-            const completedSource: KnowledgeSource = { ...s, status: 'complete', summary };
-            if (completedSource.type === 'image') {
-              delete completedSource.data;
+        console.log(`Analysis completed for source: ${source.id}`);
+        
+        setKnowledgeSources(prev => {
+          console.log('🔄 Before update:', prev.length, 'sources');
+          const updated = prev.map(s => {
+            if (s.id === source.id) {
+              console.log(`✅ Updating source ${s.id} from ${s.status} to complete`);
+              const completedSource: KnowledgeSource = { 
+                ...s, 
+                status: 'complete', 
+                summary
+                // Keep data for now - will be removed during storage upload
+              };
+              return completedSource;
             }
-            return completedSource;
-          }
-          return s;
-        }));
+            return s;
+          });
+          console.log('🔄 After update:', updated.length, 'sources');
+          
+          // Update the ref with current sources
+          currentSourcesRef.current = updated;
+          
+          return updated;
+        });
+        completedCount++;
       } catch (err: any) {
-        handleSetKnowledgeSources(prev => prev.map(s => s.id === source.id ? { ...s, status: 'error', error: err.message } : s));
+        console.error(`❌ Analysis failed for source: ${source.id}`, err);
+        setKnowledgeSources(prev => {
+          const updated = prev.map(s => s.id === source.id ? { ...s, status: 'error', error: err.message } : s);
+          currentSourcesRef.current = updated; // Keep ref in sync
+          return updated;
+        });
+        completedCount++;
       }
+    }
+    
+    // Clear analyzing flag and trigger save when all sources are done
+    if (completedCount === newSources.length) {
+      isAnalyzingRef.current = false;
+      console.log('🎉 Analysis complete, triggering save');
+      
+      // Trigger save after a delay to allow state to settle - OUTSIDE of state setter
+      setTimeout(async () => {
+        if (user && !saveInProgressRef.current) {
+          saveInProgressRef.current = true;
+          console.log('💾 Starting final save operation');
+          
+          try {
+            // Use the ref to get current sources (avoids closure issues)
+            const currentSources = currentSourcesRef.current;
+            console.log('💾 Final save - Current sources:', currentSources.length, 
+              'Data sizes:', currentSources.map(s => ({ id: s.id, status: s.status, dataSize: s.data?.length || 0 })));
+            
+            // Save with the current sources from ref
+            await saveKnowledgeSources(user.id, currentSources);
+            console.log('✅ Save completed successfully');
+            
+            // Clean up large data from state after successful save
+            setKnowledgeSources(prev => prev.map(s => 
+              s.type === 'image' && s.status === 'complete' 
+                ? { ...s, data: undefined }
+                : s
+            ));
+          } catch (error) {
+            console.error('❌ Error saving final results:', error);
+          } finally {
+            saveInProgressRef.current = false;
+          }
+        } else {
+          console.log('⏭️ Save skipped - already in progress or no user');
+        }
+      }, 200); // Increased delay to ensure all state updates complete
     }
   }, [handleSetKnowledgeSources]);
 
@@ -222,13 +332,13 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 flex flex-col font-sans">
-        {!isFirebaseConfigured && (
+        {!isSupabaseConfigured && (
             <div className="bg-yellow-600 text-center p-2 text-white font-semibold">
-                Firebase is not configured. Please update firebaseConfig.ts to enable login and data persistence.
+                Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env.local to enable login and data persistence.
             </div>
         )}
         
-        {!user && isFirebaseConfigured ? <AuthScreen error={error} setError={setError} /> : (
+        {!user && isSupabaseConfigured ? <AuthScreen error={error} setError={setError} /> : (
             <>
                 <header className="bg-gray-800/50 backdrop-blur-sm p-4 text-center sticky top-0 z-10">
                     <h1 className="text-2xl font-bold tracking-wider text-blue-400">AI Fitness Planner</h1>
@@ -297,16 +407,13 @@ const AuthScreen: React.FC<{error: string | null; setError: (e: string | null) =
         } catch (error: any) {
             // Only update state if the component is still mounted.
             if (mounted.current) {
-                // Firebase provides structured error codes, let's make them user-friendly
-                let friendlyMessage = error.message;
-                if (error.code === 'auth/wrong-password') {
-                    friendlyMessage = 'Incorrect password. Please try again.';
-                } else if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
-                    friendlyMessage = 'No account found or invalid credentials.';
-                } else if (error.code === 'auth/email-already-in-use') {
+                let friendlyMessage = typeof error?.message === 'string' ? error.message : 'An unexpected error occurred.';
+                if (/invalid login credentials/i.test(friendlyMessage)) {
+                    friendlyMessage = 'Incorrect email or password. Please try again.';
+                } else if (/email already registered/i.test(friendlyMessage)) {
                     friendlyMessage = 'An account already exists with this email address.';
-                } else if (error.code === 'auth/weak-password') {
-                    friendlyMessage = 'Password should be at least 6 characters.';
+                } else if (/password should be at least/i.test(friendlyMessage)) {
+                    friendlyMessage = 'Password should meet the minimum length requirements.';
                 }
                 setError(friendlyMessage);
                 setLoading(false);
@@ -414,12 +521,26 @@ const ProfileScreen: React.FC<{ profile: UserProfile; setProfile: (profile: User
       {/* Goals */}
       <div>
         <label className="block text-lg font-semibold mb-2 text-gray-300">Primary Goals</label>
-        <textarea
-            value={profile.goals.join(', ')}
-            onChange={(e) => handleInputChange('goals', e.target.value.split(',').map(s => s.trim()))}
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-            placeholder="e.g., Build Muscle, Improve Cardio, Lose Weight"
-        />
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          {['Build Muscle', 'Improve Endurance', 'Lose Weight', 'Increase Strength', 'Improve Cardio', 'General Fitness'].map(goal => (
+            <button key={goal} 
+              onClick={() => {
+                const currentGoals = [...profile.goals];
+                const goalIndex = currentGoals.indexOf(goal);
+                if (goalIndex > -1) {
+                  currentGoals.splice(goalIndex, 1);
+                } else {
+                  currentGoals.push(goal);
+                }
+                handleInputChange('goals', currentGoals);
+              }}
+              className={`p-3 rounded-lg text-sm font-semibold transition-all ${
+                profile.goals.includes(goal) ? 'bg-blue-600 text-white ring-2 ring-blue-400' : 'bg-gray-700 hover:bg-gray-600'
+              }`}>
+              {goal}
+            </button>
+          ))}
+        </div>
       </div>
 
        {/* Schedule */}
@@ -441,21 +562,36 @@ const ProfileScreen: React.FC<{ profile: UserProfile; setProfile: (profile: User
       </div>
        <div>
         <label htmlFor="planDuration" className="block text-lg font-semibold mb-2 text-gray-300">Plan Duration (Weeks)</label>
-        <input type="number" id="planDuration" value={profile.planDurationWeeks} min="1" max="12"
-            onChange={e => handleInputChange('planDurationWeeks', parseInt(e.target.value))}
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+        <select id="planDuration" value={profile.planDurationWeeks} onChange={e => handleInputChange('planDurationWeeks', parseInt(e.target.value))}
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            {[1, 2, 3, 4, 6, 8, 10, 12].map(weeks => <option key={weeks} value={weeks}>{weeks} week{weeks > 1 ? 's' : ''}</option>)}
+        </select>
       </div>
 
 
       {/* Equipment */}
        <div>
         <label className="block text-lg font-semibold mb-2 text-gray-300">Available Equipment</label>
-        <textarea
-            value={profile.availableEquipment.join(', ')}
-            onChange={(e) => handleInputChange('availableEquipment', e.target.value.split(',').map(s => s.trim()))}
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-            placeholder="e.g., Barbell, Dumbbells, Kettlebell, Pull-up Bar"
-        />
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+          {['Barbell', 'Dumbbells', 'Kettlebell', 'Pull-up Bar', 'Cable Machine', 'Resistance Bands', 'Medicine Ball', 'Battle Ropes', 'Box/Platform', 'Rowing Machine', 'Assault Bike', 'Treadmill'].map(equipment => (
+            <button key={equipment} 
+              onClick={() => {
+                const currentEquipment = [...profile.availableEquipment];
+                const equipmentIndex = currentEquipment.indexOf(equipment);
+                if (equipmentIndex > -1) {
+                  currentEquipment.splice(equipmentIndex, 1);
+                } else {
+                  currentEquipment.push(equipment);
+                }
+                handleInputChange('availableEquipment', currentEquipment);
+              }}
+              className={`p-3 rounded-lg text-sm font-semibold transition-all ${
+                profile.availableEquipment.includes(equipment) ? 'bg-blue-600 text-white ring-2 ring-blue-400' : 'bg-gray-700 hover:bg-gray-600'
+              }`}>
+              {equipment}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Performance Metrics */}
@@ -469,18 +605,19 @@ const ProfileScreen: React.FC<{ profile: UserProfile; setProfile: (profile: User
                 </div>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {(Object.keys(profile.performanceMetrics) as Array<keyof UserProfile['performanceMetrics']>)
-                    .filter(k => k !== 'unit')
-                    .map(metric => (
-                        <div key={metric}>
-                            <label htmlFor={metric} className="block text-sm font-medium text-gray-400 capitalize">{metric.replace(/([A-Z])/g, ' $1')}</label>
-                            <input type="number" id={metric} value={profile.performanceMetrics[metric] || ''}
-                                onChange={e => handleMetricChange(metric, e.target.value ? parseInt(e.target.value) : undefined)}
-                                className="mt-1 w-full bg-gray-700 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                                placeholder={`in ${profile.performanceMetrics.unit}`}
-                            />
-                        </div>
-                    ))}
+                {['bench', 'squat', 'deadlift', 'press', 'snatch', 'cleanAndJerk'].map(exercise => (
+                    <div key={exercise}>
+                        <label htmlFor={exercise} className="block text-sm font-medium text-gray-400 capitalize">
+                          {exercise === 'cleanAndJerk' ? 'Clean & Jerk' : exercise === 'press' ? 'Overhead Press' : exercise}
+                        </label>
+                        <input type="number" id={exercise} 
+                            value={profile.performanceMetrics[exercise as keyof UserProfile['performanceMetrics']] || ''}
+                            onChange={e => handleMetricChange(exercise as keyof UserProfile['performanceMetrics'], e.target.value ? parseInt(e.target.value) : undefined)}
+                            className="mt-1 w-full bg-gray-700 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                            placeholder={`in ${profile.performanceMetrics.unit}`}
+                        />
+                    </div>
+                ))}
             </div>
         </div>
       </div>
@@ -506,7 +643,7 @@ const GenerateScreen: React.FC<{
         if (!files || files.length === 0) return;
 
         setError(null);
-        const imageFiles = Array.from(files).filter(file => file.type.startsWith('image/'));
+        const imageFiles = Array.from(files).filter((file: File) => file.type.startsWith('image/'));
         if (imageFiles.length === 0) {
             setError('Please select valid image files.');
             return;
@@ -515,7 +652,7 @@ const GenerateScreen: React.FC<{
         const sourcesToAnalyze: Omit<KnowledgeSource, 'id' | 'status'>[] = [];
         let readCount = 0;
 
-        imageFiles.forEach(file => {
+        imageFiles.forEach((file: File) => {
             const reader = new FileReader();
             reader.onload = (e) => {
                 const base64Data = (e.target?.result as string).split(',')[1];
@@ -540,7 +677,7 @@ const GenerateScreen: React.FC<{
                     onAnalyze(sourcesToAnalyze);
                 }
             }
-            reader.readAsDataURL(file);
+            reader.readAsDataURL(file as Blob);
         });
 
         // Reset the input
@@ -589,11 +726,13 @@ const GenerateScreen: React.FC<{
 
             {/* Knowledge Sources List */}
             <div className="space-y-3">
-                <h3 className="text-xl font-semibold">Sources ({sources.length})</h3>
+                <div className="flex justify-between items-center">
+                    <h3 className="text-xl font-semibold">Sources ({sources.length})</h3>
+                </div>
                 {sources.length === 0 && <p className="text-gray-500 text-center py-4">No sources added yet.</p>}
-                {sources.map(source => (
-                    <div key={source.id} className="bg-gray-800 p-3 rounded-lg flex items-start space-x-4">
-                        <img src={source.type === 'image' ? source.preview : `https://img.youtube.com/vi/${new URL(source.preview).searchParams.get('v') || source.preview.split('/').pop()}/0.jpg`}
+                {sources.map((source, index) => (
+                    <div key={`${source.id}-${index}`} className="bg-gray-800 p-3 rounded-lg flex items-start space-x-4">
+                        <img src={source.type === 'image' ? (source.preview?.startsWith('data:image') ? source.preview : '/placeholder-image.png') : getYouTubeThumbnail(source.preview)}
                             alt="source preview" className="w-24 h-20 object-cover rounded-md flex-shrink-0" />
                         <div className="flex-grow">
                             <div className="flex justify-between items-start">

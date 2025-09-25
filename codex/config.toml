@@ -1,0 +1,1 @@
+[mcp_servers.supabase] command = "npx" args = ["-y", "@supabase/mcp-server-supabase@latest", "--project-ref=<yqafwolraooswllyegog>", "--features=database,storage,functions,branches"] env = { "SUPABASE_ACCESS_TOKEN" = "<sbp_8ae91066de3ff204623ed50485d1ec7d55674ff2>" }
