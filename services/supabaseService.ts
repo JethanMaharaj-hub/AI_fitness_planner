@@ -56,7 +56,7 @@ export const signOut = async (): Promise<void> => {
 
 interface UserData {
   profile: UserProfile;
-  workoutPlan: WorkoutPlan | null;
+  workoutPlans: WorkoutPlan[];
   knowledgeSources: KnowledgeSource[];
   workoutHistory: WorkoutLog[];
 }
@@ -66,7 +66,7 @@ export const loadUserData = async (uid: string): Promise<UserData | null> => {
 
   const [profileResult, planResult, sourcesResult, logsResult] = await Promise.all([
     client.from('profiles').select('profile').eq('user_id', uid).maybeSingle(),
-    client.from('workout_plans').select('plan').eq('user_id', uid).maybeSingle(),
+    client.from('workout_plans').select('plan').eq('user_id', uid).order('created_at', { ascending: false }),
     client.from('knowledge_sources').select('source').eq('user_id', uid),
     client.from('workout_logs').select('log').eq('user_id', uid).order('created_at', { ascending: true })
   ]);
@@ -113,7 +113,7 @@ export const loadUserData = async (uid: string): Promise<UserData | null> => {
 
   return {
     profile,
-    workoutPlan: (planResult.data?.plan as WorkoutPlan) ?? null,
+    workoutPlans: (planResult.data?.map(row => row.plan as WorkoutPlan)) ?? [],
     knowledgeSources,
     workoutHistory: (logsResult.data?.map(row => row.log as WorkoutLog)) ?? [],
   };
@@ -132,17 +132,30 @@ export const saveUserProfile = async (uid: string, profile: UserProfile) => {
   await upsertWithTimestamp('profiles', { user_id: uid, profile });
 };
 
-export const saveWorkoutPlan = async (uid: string, workoutPlan: WorkoutPlan | null) => {
+export const saveWorkoutPlan = async (uid: string, workoutPlan: WorkoutPlan) => {
   const client = ensureClient();
-  if (!workoutPlan) {
-    const { error } = await client.from('workout_plans').delete().eq('user_id', uid);
-    if (error && error.code !== 'PGRST116') {
-      console.error('Error clearing workout plan:', error);
-      throw new Error('Failed to clear workout plan.');
-    }
-    return;
+  const { error } = await client.from('workout_plans').insert({
+    user_id: uid,
+    plan: workoutPlan,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  });
+  if (error) {
+    console.error('Error saving workout plan:', error);
+    throw new Error('Failed to save workout plan.');
   }
-  await upsertWithTimestamp('workout_plans', { user_id: uid, plan: workoutPlan });
+};
+
+export const deleteWorkoutPlan = async (uid: string, planName: string) => {
+  const client = ensureClient();
+  const { error } = await client.from('workout_plans')
+    .delete()
+    .eq('user_id', uid)
+    .eq('plan->>planName', planName);
+  if (error) {
+    console.error('Error deleting workout plan:', error);
+    throw new Error('Failed to delete workout plan.');
+  }
 };
 
 // Storage functions for large content

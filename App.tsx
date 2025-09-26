@@ -10,7 +10,7 @@ import Loader from './components/Loader';
 import PWAInstallBanner from './components/PWAInstallBanner';
 import PWATestingPanel from './components/PWATestingPanel';
 import type { User } from '@supabase/supabase-js';
-import { isSupabaseConfigured, onAuthStateChanged, signUp, signIn, signOut, loadUserData, saveUserProfile, saveWorkoutPlan, saveKnowledgeSources, saveWorkoutHistory } from './services/supabaseService';
+import { isSupabaseConfigured, onAuthStateChanged, signUp, signIn, signOut, loadUserData, saveUserProfile, saveWorkoutPlan, saveKnowledgeSources, saveWorkoutHistory, deleteWorkoutPlan } from './services/supabaseService';
 
 
 const getYouTubeThumbnail = (url: string): string => {
@@ -47,7 +47,8 @@ const App: React.FC = () => {
   const [isAppLoading, setIsAppLoading] = useState<boolean>(true);
 
   const [userProfile, setUserProfile] = useState<UserProfile>(defaultProfile);
-  const [workoutPlan, setWorkoutPlan] = useState<WorkoutPlan | null>(null);
+  const [workoutPlans, setWorkoutPlans] = useState<WorkoutPlan[]>([]);
+  const [selectedPlanIndex, setSelectedPlanIndex] = useState<number>(0);
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([]);
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutLog[]>([]);
   
@@ -80,7 +81,10 @@ const App: React.FC = () => {
           const userData = await loadUserData(authUser.id);
           if (userData) {
             setUserProfile(userData.profile || defaultProfile);
-            setWorkoutPlan(userData.workoutPlan || null);
+            setWorkoutPlans(userData.workoutPlans || []);
+            if (userData.workoutPlans && userData.workoutPlans.length > 0) {
+              setSelectedPlanIndex(0); // Select the most recent plan
+            }
             
             // Don't overwrite knowledge sources if we're currently analyzing
             if (!isAnalyzingRef.current) {
@@ -105,7 +109,7 @@ const App: React.FC = () => {
         setUser(null);
         // Reset state on logout
         setUserProfile(defaultProfile);
-        setWorkoutPlan(null);
+        setWorkoutPlans([]);
         setKnowledgeSources([]);
         setWorkoutHistory([]);
       }
@@ -120,9 +124,27 @@ const App: React.FC = () => {
     if(user) saveUserProfile(user.id, profile);
   }
 
-  const handleSetWorkoutPlan = (plan: WorkoutPlan | null) => {
-    setWorkoutPlan(plan);
-    if(user) saveWorkoutPlan(user.id, plan);
+  const handleSetWorkoutPlan = (plan: WorkoutPlan) => {
+    // Generate a unique name if not provided
+    if (!plan.planName || plan.planName.includes('Mock')) {
+      const existingNames = workoutPlans.map(p => p.planName);
+      const baseName = 'My Workout Plan';
+      let counter = 1;
+      let newName = baseName;
+      while (existingNames.includes(newName)) {
+        counter++;
+        newName = `${baseName} ${counter}`;
+      }
+      plan.planName = newName;
+    }
+    
+    const newPlans = [plan, ...workoutPlans];
+    setWorkoutPlans(newPlans);
+    setSelectedPlanIndex(0); // Select the new plan
+    
+    if (user) {
+      saveWorkoutPlan(user.id, plan).catch(console.error);
+    }
   }
 
   const handleSetKnowledgeSources = (sources: React.SetStateAction<KnowledgeSource[]>) => {
@@ -329,11 +351,29 @@ const App: React.FC = () => {
       case AppView.GENERATE:
         return <GenerateScreen onAnalyze={handleAnalyzeSources} onGenerate={handleGeneratePlan} sources={knowledgeSources} error={error} setError={setError} />;
       case AppView.WORKOUT:
-        return workoutPlan ? <WorkoutScreen plan={workoutPlan} onViewWorkout={handleViewWorkout} /> : <div className="text-center p-8">No workout plan generated yet. Go to the 'Generate' tab!</div>;
+        return workoutPlans.length > 0 ? (
+          <WorkoutScreen 
+            plans={workoutPlans} 
+            selectedPlanIndex={selectedPlanIndex}
+            onPlanSelect={setSelectedPlanIndex}
+            userProfile={userProfile} 
+            onViewWorkout={handleViewWorkout}
+            onDeletePlan={(planName: string) => {
+              if (user) deleteWorkoutPlan(user.id, planName).catch(console.error);
+              const newPlans = workoutPlans.filter(p => p.planName !== planName);
+              setWorkoutPlans(newPlans);
+              if (selectedPlanIndex >= newPlans.length) {
+                setSelectedPlanIndex(Math.max(0, newPlans.length - 1));
+              }
+            }}
+          /> 
+        ) : (
+          <div className="text-center p-8">No workout plans generated yet. Go to the 'Generate' tab!</div>
+        );
       case AppView.WORKOUT_SUMMARY:
-        return selectedWorkoutDay ? <WorkoutSummaryScreen day={selectedWorkoutDay} planName={workoutPlan?.planName || ''} onStartWorkout={handleStartWorkout} onBack={() => setCurrentView(AppView.WORKOUT)} /> : <div className="text-center p-8">No workout selected.</div>;
+        return selectedWorkoutDay ? <WorkoutSummaryScreen day={selectedWorkoutDay} planName={workoutPlans[selectedPlanIndex]?.planName || ''} onStartWorkout={handleStartWorkout} onBack={() => setCurrentView(AppView.WORKOUT)} /> : <div className="text-center p-8">No workout selected.</div>;
       case AppView.ACTIVE_WORKOUT:
-        return activeWorkoutDay ? <ActiveWorkoutScreen day={activeWorkoutDay} planName={workoutPlan?.planName || ''} onFinish={handleFinishWorkout} /> : <div className="text-center p-8">No active workout.</div>;
+        return activeWorkoutDay ? <ActiveWorkoutScreen day={activeWorkoutDay} planName={workoutPlans[selectedPlanIndex]?.planName || ''} onFinish={handleFinishWorkout} /> : <div className="text-center p-8">No active workout.</div>;
        case AppView.HISTORY:
         return <HistoryScreen history={workoutHistory} />;
       default:
@@ -791,8 +831,21 @@ const GenerateScreen: React.FC<{
 
 
 // --- WORKOUT SCREEN ---
-const WorkoutScreen: React.FC<{ plan: WorkoutPlan; onViewWorkout: (day: WorkoutDay) => void; }> = ({ plan, onViewWorkout }) => {
+const WorkoutScreen: React.FC<{ 
+  plans: WorkoutPlan[];
+  selectedPlanIndex: number;
+  onPlanSelect: (index: number) => void;
+  userProfile: UserProfile; 
+  onViewWorkout: (day: WorkoutDay) => void;
+  onDeletePlan: (planName: string) => void;
+}> = ({ plans, selectedPlanIndex, onPlanSelect, userProfile, onViewWorkout, onDeletePlan }) => {
   const [selectedWeek, setSelectedWeek] = useState(1);
+  
+  if (plans.length === 0) {
+    return <div className="text-center p-8">No workout plans available.</div>;
+  }
+  
+  const plan = plans[selectedPlanIndex];
   const daysForWeek = plan.days.filter(d => d.week === selectedWeek);
 
   // Validate plan against user goals
@@ -801,7 +854,36 @@ const WorkoutScreen: React.FC<{ plan: WorkoutPlan; onViewWorkout: (day: WorkoutD
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-3xl font-bold text-blue-400">{plan.planName}</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-3xl font-bold text-blue-400">{plan.planName}</h2>
+          
+          {/* Plan Selector and Actions */}
+          <div className="flex items-center space-x-3">
+            {plans.length > 1 && (
+              <select 
+                value={selectedPlanIndex} 
+                onChange={(e) => onPlanSelect(parseInt(e.target.value))}
+                className="bg-gray-800 text-white px-3 py-2 rounded border border-gray-700 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                {plans.map((p, index) => (
+                  <option key={index} value={index}>
+                    {p.planName} ({p.durationWeeks}w)
+                  </option>
+                ))}
+              </select>
+            )}
+            
+            {plans.length > 1 && (
+              <button
+                onClick={() => onDeletePlan(plan.planName)}
+                className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded text-sm font-medium transition-colors"
+                title="Delete this plan"
+              >
+                Delete Plan
+              </button>
+            )}
+          </div>
+        </div>
         
         {/* Goal Validation Feedback */}
         <div className="mt-3">

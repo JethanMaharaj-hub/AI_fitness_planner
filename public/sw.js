@@ -1,17 +1,9 @@
-const CACHE_NAME = 'ai-fitness-planner-v1';
+const CACHE_NAME = 'ai-fitness-planner-v2';
 const urlsToCache = [
   '/',
-  '/index.tsx',
-  '/App.tsx',
-  '/types.ts',
-  '/services/geminiService.ts',
-  '/services/supabaseService.ts',
-  '/services/supabaseClient.ts',
-  '/components/Timer.tsx',
-  '/components/SectionTimer.tsx',
-  '/components/Loader.tsx',
-  '/components/icons.tsx',
-  '/manifest.json'
+  '/manifest.json',
+  '/icon-192.png',
+  '/icon-512.png'
 ];
 
 // Install event
@@ -20,20 +12,45 @@ self.addEventListener('install', (event) => {
     caches.open(CACHE_NAME)
       .then((cache) => {
         console.log('Opened cache');
-        return cache.addAll(urlsToCache);
+        return cache.addAll(urlsToCache).catch(error => {
+          console.warn('Failed to cache some resources:', error);
+          // Cache what we can
+          return Promise.allSettled(urlsToCache.map(url => cache.add(url)));
+        });
       })
   );
+  self.skipWaiting();
 });
 
 // Fetch event
 self.addEventListener('fetch', (event) => {
+  // Only handle GET requests
+  if (event.request.method !== 'GET') return;
+  
+  // Skip cross-origin requests
+  if (!event.request.url.startsWith(self.location.origin)) return;
+  
   event.respondWith(
     caches.match(event.request)
       .then((response) => {
         // Return cached version or fetch from network
-        return response || fetch(event.request);
-      }
-    )
+        if (response) {
+          return response;
+        }
+        
+        return fetch(event.request).catch((error) => {
+          console.log('Network fetch failed:', error);
+          // If network fails, return cached root for navigation requests
+          if (event.request.destination === 'document') {
+            return caches.match('/');
+          }
+          // For other resources, return a basic error response instead of undefined
+          return new Response('Resource not available offline', {
+            status: 503,
+            statusText: 'Service Unavailable'
+          });
+        });
+      })
   );
 });
 

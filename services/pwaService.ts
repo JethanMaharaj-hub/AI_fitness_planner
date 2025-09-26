@@ -47,10 +47,10 @@ export const releaseWakeLock = (wakeLock: WakeLockSentinel | null): void => {
   }
 };
 
-// Install PWA prompt
+// Install PWA prompt - move deferredPrompt to module scope
+let deferredPrompt: BeforeInstallPromptEvent | null = null;
+
 export const showInstallPrompt = (): void => {
-  let deferredPrompt: BeforeInstallPromptEvent | null = null;
-  
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     deferredPrompt = e as BeforeInstallPromptEvent;
@@ -94,8 +94,16 @@ const showUpdateNotification = (): void => {
 // Background sync for workout data
 export const scheduleBackgroundSync = async (tag: string): Promise<void> => {
   if ('serviceWorker' in navigator && 'sync' in window.ServiceWorkerRegistration.prototype) {
-    const registration = await navigator.serviceWorker.ready;
-    await registration.sync.register(tag);
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      // Type assertion since sync might not be in the standard types yet
+      const syncReg = registration as any;
+      if (syncReg.sync) {
+        await syncReg.sync.register(tag);
+      }
+    } catch (error) {
+      console.warn('Background sync not supported:', error);
+    }
   }
 };
 

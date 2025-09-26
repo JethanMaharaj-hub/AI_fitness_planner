@@ -538,74 +538,40 @@ The JSON structure MUST adhere to the following format:
   ]
 }`;
   
-  let attempts = 0;
-  const maxAttempts = 2;
-  
-  while (attempts < maxAttempts) {
-    try {
-      attempts++;
-      console.log(`Generating workout plan (attempt ${attempts}/${maxAttempts})...`);
-      
-      const stream = await ai.models.generateContentStream({
-        model: "gemini-2.5-flash",
-        contents: "Generate the workout plan JSON based on the user profile and goal-specific requirements.",
-        config: {
-          systemInstruction,
-        },
-      });
+  try {
+    console.log("Generating workout plan...");
+    
+    const stream = await ai.models.generateContentStream({
+      model: "gemini-2.5-flash",
+      contents: "Generate the workout plan JSON based on the user profile and goal-specific requirements.",
+      config: {
+        systemInstruction,
+      },
+    });
 
-      let jsonText = '';
-      for await (const chunk of stream) {
-        jsonText += chunk.text;
-      }
-      
-      // Clean potential markdown formatting
-      if (jsonText.startsWith('```json')) {
-        jsonText = jsonText.substring(7, jsonText.length - 3).trim();
-      } else if (jsonText.startsWith('```')) {
-         jsonText = jsonText.substring(3, jsonText.length - 3).trim();
-      }
-      
-      const plan = JSON.parse(jsonText) as WorkoutPlan;
-      
-      // Validate the plan against goals
-      const validation = validateWorkoutPlan(plan, userProfile.goals);
-      
-      if (validation.isValid) {
-        console.log("✅ Generated plan successfully meets goal requirements");
-        return plan;
-      } else {
-        console.warn("⚠️ Generated plan validation issues:", validation.issues);
-        
-        if (attempts < maxAttempts) {
-          // Retry with additional constraints
-          const additionalConstraints = `\n\n**PREVIOUS ATTEMPT FAILED VALIDATION:**\n${validation.issues.join('\n')}\n\nYou MUST address these issues in the new plan.`;
-          systemInstruction += additionalConstraints;
-          console.log("🔄 Retrying with additional constraints...");
-          continue;
-        } else {
-          // Return plan with warnings if max attempts reached
-          console.warn("⚠️ Returning plan despite validation issues after max attempts");
-          return plan;
-        }
-      }
-
-    } catch (error) {
-      console.error(`Error creating plan (attempt ${attempts}):`, error);
-      
-      if (attempts >= maxAttempts) {
-        if (error instanceof Error) {
-            throw new Error(`Failed to generate workout plan after ${maxAttempts} attempts. ${error.message}`);
-        }
-        throw new Error(`Failed to generate workout plan after ${maxAttempts} attempts. An unknown error occurred.`);
-      }
-      
-      // Wait before retry
-      await new Promise(resolve => setTimeout(resolve, 1000));
+    let jsonText = '';
+    for await (const chunk of stream) {
+      jsonText += chunk.text;
     }
+    
+    // Clean potential markdown formatting
+    if (jsonText.startsWith('```json')) {
+      jsonText = jsonText.substring(7, jsonText.length - 3).trim();
+    } else if (jsonText.startsWith('```')) {
+       jsonText = jsonText.substring(3, jsonText.length - 3).trim();
+    }
+    
+    const plan = JSON.parse(jsonText) as WorkoutPlan;
+    console.log("✅ Generated workout plan successfully");
+    return plan;
+
+  } catch (error) {
+    console.error("Error creating plan:", error);
+    if (error instanceof Error) {
+        throw new Error(`Failed to generate workout plan. ${error.message}`);
+    }
+    throw new Error("Failed to generate workout plan. An unknown error occurred.");
   }
-  
-  throw new Error("Unexpected end of plan generation process");
 };
 
 export const adjustWorkoutDuration = async (
