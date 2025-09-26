@@ -799,11 +799,19 @@ const GenerateScreen: React.FC<{
                 {sources.map((source, index) => (
                     <div key={`${source.id}-${index}`} className="bg-gray-800 p-3 rounded-lg flex items-start space-x-4">
                         <img src={source.type === 'image' ? (source.preview?.startsWith('data:image') ? source.preview : '/placeholder-image.png') : getYouTubeThumbnail(source.preview)}
-                            alt="source preview" className="w-24 h-20 object-cover rounded-md flex-shrink-0" />
-                        <div className="flex-grow">
-                            <div className="flex justify-between items-start">
-                                <p className="text-sm font-semibold truncate pr-2">{source.type === 'youtube' ? source.preview : 'Uploaded Image'}</p>
-                                <span className={`text-xs font-bold px-2 py-1 rounded-full ${
+                            alt="source preview" className="w-16 h-12 sm:w-24 sm:h-20 object-cover rounded-md flex-shrink-0" />
+                        <div className="flex-grow min-w-0">
+                            <div className="flex justify-between items-start gap-2">
+                                <div className="min-w-0 flex-1">
+                                    <p className="text-sm font-semibold text-white break-words">
+                                        {source.type === 'youtube' ? (
+                                            <span className="break-all">{source.preview}</span>
+                                        ) : (
+                                            'Uploaded Image'
+                                        )}
+                                    </p>
+                                </div>
+                                <span className={`text-xs font-bold px-2 py-1 rounded-full flex-shrink-0 ${
                                     source.status === 'complete' ? 'bg-green-500 text-gray-900' : 
                                     source.status === 'analyzing' ? 'bg-yellow-500 text-gray-900' : 
                                     source.status === 'error' ? 'bg-red-500 text-white' : 'bg-gray-600'}`
@@ -812,8 +820,8 @@ const GenerateScreen: React.FC<{
                                 </span>
                             </div>
                             {source.status === 'analyzing' && <div className="text-xs text-yellow-400 mt-1">Analyzing...</div>}
-                            {source.status === 'complete' && <p className="text-xs text-gray-400 mt-1 italic line-clamp-2">{source.summary}</p>}
-                            {source.status === 'error' && <p className="text-xs text-red-400 mt-1">{source.error}</p>}
+                            {source.status === 'complete' && <p className="text-xs text-gray-400 mt-1 italic line-clamp-2 break-words">{source.summary}</p>}
+                            {source.status === 'error' && <p className="text-xs text-red-400 mt-1 break-words">{source.error}</p>}
                         </div>
                     </div>
                 ))}
@@ -854,33 +862,33 @@ const WorkoutScreen: React.FC<{
   return (
     <div className="space-y-6">
       <div>
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-3xl font-bold text-blue-400">{plan.planName}</h2>
-          
-          {/* Plan Selector and Actions */}
-          <div className="flex items-center space-x-3">
-            {plans.length > 1 && (
-              <select 
-                value={selectedPlanIndex} 
-                onChange={(e) => onPlanSelect(parseInt(e.target.value))}
-                className="bg-gray-800 text-white px-3 py-2 rounded border border-gray-700 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                {plans.map((p, index) => (
-                  <option key={index} value={index}>
-                    {p.planName} ({p.durationWeeks}w)
-                  </option>
-                ))}
-              </select>
-            )}
+        <div className="mb-4">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+            <h2 className="text-2xl sm:text-3xl font-bold text-blue-400 truncate">{plan.planName}</h2>
             
+            {/* Plan Selector and Actions */}
             {plans.length > 1 && (
-              <button
-                onClick={() => onDeletePlan(plan.planName)}
-                className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded text-sm font-medium transition-colors"
-                title="Delete this plan"
-              >
-                Delete Plan
-              </button>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
+                <select 
+                  value={selectedPlanIndex} 
+                  onChange={(e) => onPlanSelect(parseInt(e.target.value))}
+                  className="bg-gray-800 text-white px-3 py-2 rounded border border-gray-700 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                >
+                  {plans.map((p, index) => (
+                    <option key={index} value={index}>
+                      {p.planName} ({p.durationWeeks}w)
+                    </option>
+                  ))}
+                </select>
+                
+                <button
+                  onClick={() => onDeletePlan(plan.planName)}
+                  className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded text-sm font-medium transition-colors"
+                  title="Delete this plan"
+                >
+                  Delete Plan
+                </button>
+              </div>
             )}
           </div>
         </div>

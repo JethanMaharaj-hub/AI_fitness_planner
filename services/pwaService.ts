@@ -51,11 +51,44 @@ export const releaseWakeLock = (wakeLock: WakeLockSentinel | null): void => {
 let deferredPrompt: BeforeInstallPromptEvent | null = null;
 
 export const showInstallPrompt = (): void => {
+  // Check if already installed
+  if (window.matchMedia('(display-mode: standalone)').matches) {
+    console.log('App is already installed');
+    return;
+  }
+  
   window.addEventListener('beforeinstallprompt', (e) => {
+    console.log('beforeinstallprompt event fired');
     e.preventDefault();
     deferredPrompt = e as BeforeInstallPromptEvent;
     showInstallButton();
   });
+  
+  // Fallback for iOS Safari
+  if (navigator.userAgent.match(/(iPad|iPhone|iPod)/g) && !navigator.userAgent.match(/CriOS/g)) {
+    showIOSInstallPrompt();
+  }
+};
+
+const showIOSInstallPrompt = (): void => {
+  const isIOSStandalone = (window.navigator as any).standalone === true;
+  if (!isIOSStandalone) {
+    const iosPrompt = document.createElement('div');
+    iosPrompt.className = 'fixed top-4 left-4 right-4 bg-blue-600 text-white p-4 rounded-lg shadow-lg z-50';
+    iosPrompt.innerHTML = `
+      <p class="mb-2">Install this app on your iPhone:</p>
+      <p class="text-sm">Tap the share button <span class="inline-block">📤</span> and then "Add to Home Screen"</p>
+      <button onclick="this.parentElement.remove()" class="mt-2 bg-white text-blue-600 px-3 py-1 rounded text-sm">Got it</button>
+    `;
+    document.body.appendChild(iosPrompt);
+    
+    // Auto hide after 10 seconds
+    setTimeout(() => {
+      if (iosPrompt.parentElement) {
+        iosPrompt.remove();
+      }
+    }, 10000);
+  }
 };
 
 const showInstallButton = (): void => {

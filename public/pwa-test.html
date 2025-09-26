@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PWA Installation Test</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#3b82f6">
+</head>
+<body style="font-family: Arial, sans-serif; padding: 20px; background: #1f2937; color: white;">
+    <h1>PWA Installation Test</h1>
+    <div id="status"></div>
+    
+    <script>
+        const status = document.getElementById('status');
+        
+        // Check if service worker is supported
+        if ('serviceWorker' in navigator) {
+            status.innerHTML += '<p>✅ Service Worker supported</p>';
+            
+            // Register service worker
+            navigator.serviceWorker.register('/sw.js')
+                .then(registration => {
+                    status.innerHTML += '<p>✅ Service Worker registered</p>';
+                })
+                .catch(error => {
+                    status.innerHTML += '<p>❌ Service Worker registration failed: ' + error + '</p>';
+                });
+        } else {
+            status.innerHTML += '<p>❌ Service Worker not supported</p>';
+        }
+        
+        // Check if manifest is accessible
+        fetch('/manifest.json')
+            .then(response => {
+                if (response.ok) {
+                    status.innerHTML += '<p>✅ Manifest accessible</p>';
+                    return response.json();
+                } else {
+                    throw new Error('Manifest not found');
+                }
+            })
+            .then(manifest => {
+                status.innerHTML += '<p>✅ Manifest parsed successfully</p>';
+                status.innerHTML += '<p>App name: ' + manifest.name + '</p>';
+            })
+            .catch(error => {
+                status.innerHTML += '<p>❌ Manifest error: ' + error + '</p>';
+            });
+        
+        // Check for beforeinstallprompt
+        let installPromptReceived = false;
+        window.addEventListener('beforeinstallprompt', (e) => {
+            installPromptReceived = true;
+            status.innerHTML += '<p>✅ beforeinstallprompt event received</p>';
+            e.preventDefault();
+            
+            // Show manual install button
+            const installBtn = document.createElement('button');
+            installBtn.textContent = 'Install App';
+            installBtn.style.cssText = 'padding: 10px 20px; margin: 10px 0; background: #3b82f6; color: white; border: none; border-radius: 5px; cursor: pointer;';
+            installBtn.onclick = () => {
+                e.prompt();
+                e.userChoice.then((choiceResult) => {
+                    status.innerHTML += '<p>Install choice: ' + choiceResult.outcome + '</p>';
+                });
+            };
+            document.body.appendChild(installBtn);
+        });
+        
+        // Check after a delay
+        setTimeout(() => {
+            if (!installPromptReceived) {
+                status.innerHTML += '<p>⚠️ beforeinstallprompt event not received</p>';
+                status.innerHTML += '<p>This might be because:</p>';
+                status.innerHTML += '<ul><li>App is already installed</li><li>PWA criteria not met</li><li>Browser doesn\'t support it</li></ul>';
+            }
+        }, 3000);
+        
+        // Check if running standalone
+        if (window.matchMedia('(display-mode: standalone)').matches) {
+            status.innerHTML += '<p>✅ Running in standalone mode (installed)</p>';
+        } else {
+            status.innerHTML += '<p>ℹ️ Running in browser mode</p>';
+        }
+        
+        // Check HTTPS
+        if (location.protocol === 'https:' || location.hostname === 'localhost') {
+            status.innerHTML += '<p>✅ Secure context (HTTPS)</p>';
+        } else {
+            status.innerHTML += '<p>❌ Not secure context (needs HTTPS)</p>';
+        }
+    </script>
+</body>
+</html>
